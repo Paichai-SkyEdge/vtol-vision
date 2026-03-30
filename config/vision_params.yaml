@@ -1,0 +1,19 @@
+vision_node:
+  ros__parameters:
+    camera_uri: "0"
+    camera_info_yaml: ""
+    frame_id: "camera"
+    frame_width: 640
+    frame_height: 480
+    camera_fps: 30
+    marker_size_m: 0.15
+    aruco_allowed_ids: []
+    trt_engine_path: ""
+    class_map_yaml: ""
+    conf_thr: 0.25
+    nms_thr: 0.45
+    yolo_input_size: 640
+    yolo_period_ms: 50
+    queue_size: 10
+    enable_debug_image: false
+    undistort_image: true
