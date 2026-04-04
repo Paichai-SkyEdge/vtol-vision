@@ -37,13 +37,17 @@ python3 -c "from ultralytics import YOLO; print('OK')"
 > **중요:** `.engine` 파일은 반드시 **이 Jetson 위에서** 생성해야 합니다.  
 > 다른 GPU(개발 PC 등)에서 만든 engine은 GPU 아키텍처가 달라 동작하지 않습니다.
 
+사전 학습 모델 Release:
+- <https://github.com/Paichai-SkyEdge/vtol-vision/releases/tag/mannequin-model-v1>
+- 포함 자산: `best.pt`, `best.onnx`
+
 ```bash
-# best.pt를 Jetson으로 복사 (개발 PC에서)
-scp runs/detect/mannequin_detect/yolo11n_v1_gpu/weights/best.pt \
-    user@<jetson-ip>:~/vtol-vision/weights/
+# best.pt 다운로드
+mkdir -p ~/vtol-vision/weights
+cd ~/vtol-vision/weights
+wget https://github.com/Paichai-SkyEdge/vtol-vision/releases/download/mannequin-model-v1/best.pt
 
 # Jetson에서 engine 생성
-cd ~/vtol-vision/weights
 yolo export \
     model=best.pt \
     format=engine \

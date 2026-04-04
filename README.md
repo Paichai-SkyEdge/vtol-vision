@@ -64,6 +64,10 @@ YoloLoop (thread)
 > `.engine` 파일은 GPU 아키텍처에 종속됩니다. 반드시 Jetson 위에서 export해야 합니다.
 > 자세한 절차는 [`docs/jetson_deploy.md`](docs/jetson_deploy.md) 참조.
 
+사전 학습 모델 다운로드:
+- GitHub Release: <https://github.com/Paichai-SkyEdge/vtol-vision/releases/tag/mannequin-model-v1>
+- 포함 자산: `best.pt`, `best.onnx`
+
 ---
 
 ## 검증 결과 (OpenCV CPU 기준)
@@ -85,6 +89,11 @@ YoloLoop (thread)
 ## 빌드 및 실행 (Jetson)
 
 ```bash
+# 0. 모델 다운로드
+mkdir -p ~/vtol-vision/weights
+cd ~/vtol-vision/weights
+wget https://github.com/Paichai-SkyEdge/vtol-vision/releases/download/mannequin-model-v1/best.pt
+
 # 1. engine 생성 (최초 1회, 5~15분 소요)
 yolo export model=best.pt format=engine device=0 imgsz=640 half=True
 
