@@ -4,26 +4,92 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <utility>
 
 namespace vtol_vision
 {
 
+// ---------------------------------------------------------------------------
+// TrtLogger
+// ---------------------------------------------------------------------------
+
+void YoloDetector::TrtLogger::log(
+  nvinfer1::ILogger::Severity severity,
+  const char * msg) noexcept
+{
+  // Suppress INFO/VERBOSE spam from TensorRT internals.
+  if (severity > nvinfer1::ILogger::Severity::kWARNING) {
+    return;
+  }
+  // Print to stderr; the ROS logger is not accessible here.
+  const char * prefix =
+    (severity == nvinfer1::ILogger::Severity::kERROR) ? "[TRT][ERROR]" : "[TRT][WARN]";
+  std::fprintf(stderr, "%s %s\n", prefix, msg);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 namespace
 {
-constexpr float kLetterboxPaddingValue = 114.0F;
 
-float ClipFloat(float value, float min_value, float max_value)
+float ClipFloat(float v, float lo, float hi)
 {
-  return std::max(min_value, std::min(value, max_value));
+  return std::max(lo, std::min(v, hi));
 }
+
+// Read a binary file into a byte vector.
+std::vector<char> ReadBinaryFile(const std::string & path)
+{
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if (!file.is_open()) {
+    return {};
+  }
+  const std::streamsize size = file.tellg();
+  file.seekg(0, std::ios::beg);
+  std::vector<char> buf(static_cast<std::size_t>(size));
+  if (!file.read(buf.data(), size)) {
+    return {};
+  }
+  return buf;
+}
+
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// Constructor / Destructor
+// ---------------------------------------------------------------------------
 
 YoloDetector::YoloDetector(rclcpp::Logger logger)
 : logger_(std::move(logger))
 {
 }
+
+YoloDetector::~YoloDetector()
+{
+  if (gpu_input_) {cudaFree(gpu_input_);}
+  if (gpu_output_) {cudaFree(gpu_output_);}
+  if (stream_) {cudaStreamDestroy(stream_);}
+
+#if NV_TENSORRT_MAJOR >= 10
+  delete context_;
+  delete engine_;
+  delete runtime_;
+#else
+  if (context_) {context_->destroy();}
+  if (engine_) {engine_->destroy();}
+  if (runtime_) {runtime_->destroy();}
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// LoadClassMap  (unchanged from original)
+// ---------------------------------------------------------------------------
 
 bool YoloDetector::LoadClassMap(
   const std::string & yaml_path,
@@ -61,12 +127,10 @@ bool YoloDetector::LoadClassMap(
     if (class_names_node.type() == cv::FileNode::SEQ) {
       int id = 0;
       for (auto it = class_names_node.begin(); it != class_names_node.end(); ++it) {
-        const cv::FileNode name_node = *it;
-        std::string name = static_cast<std::string>(name_node);
+        std::string name = static_cast<std::string>(*it);
         if (!name.empty()) {
-          class_map[id] = name;
+          class_map[id++] = name;
         }
-        ++id;
       }
     }
   }
@@ -79,6 +143,10 @@ bool YoloDetector::LoadClassMap(
   error_message.clear();
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Initialize
+// ---------------------------------------------------------------------------
 
 bool YoloDetector::Initialize(
   const std::string & model_path,
@@ -97,39 +165,144 @@ bool YoloDetector::Initialize(
     RCLCPP_WARN(logger_, "trt_engine_path is empty. YOLO inference disabled.");
     return false;
   }
-
   if (!std::filesystem::exists(model_path)) {
-    RCLCPP_ERROR(logger_, "model path does not exist: %s", model_path.c_str());
+    RCLCPP_ERROR(logger_, "engine file does not exist: %s", model_path.c_str());
     return false;
   }
-
-  try {
-    net_ = cv::dnn::readNet(model_path);
-  } catch (const cv::Exception & ex) {
-    RCLCPP_ERROR(logger_, "failed to load model from %s: %s", model_path.c_str(), ex.what());
-    return false;
-  }
-
-  if (net_.empty()) {
-    RCLCPP_ERROR(logger_, "loaded network is empty: %s", model_path.c_str());
-    return false;
-  }
-
-  try {
-    net_.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-    net_.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA_FP16);
-    RCLCPP_INFO(logger_, "YOLO backend: CUDA FP16");
-  } catch (const cv::Exception &) {
-    net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-    net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
-    RCLCPP_WARN(
+  if (std::filesystem::path(model_path).extension() != ".engine") {
+    RCLCPP_ERROR(
       logger_,
-      "CUDA backend unavailable. Falling back to OpenCV CPU backend.");
+      "expected a .engine file, got: %s",
+      model_path.c_str());
+    return false;
   }
+
+  // --- Deserialize engine ---
+  const std::vector<char> engine_data = ReadBinaryFile(model_path);
+  if (engine_data.empty()) {
+    RCLCPP_ERROR(logger_, "failed to read engine file: %s", model_path.c_str());
+    return false;
+  }
+
+  runtime_ = nvinfer1::createInferRuntime(trt_logger_);
+  if (!runtime_) {
+    RCLCPP_ERROR(logger_, "failed to create TensorRT runtime");
+    return false;
+  }
+
+  engine_ = runtime_->deserializeCudaEngine(engine_data.data(), engine_data.size());
+  if (!engine_) {
+    RCLCPP_ERROR(logger_, "failed to deserialize engine: %s", model_path.c_str());
+    return false;
+  }
+
+  context_ = engine_->createExecutionContext();
+  if (!context_) {
+    RCLCPP_ERROR(logger_, "failed to create execution context");
+    return false;
+  }
+
+  // --- Discover I/O tensor shapes ---
+  const std::size_t input_bytes =
+    static_cast<std::size_t>(input_size_) *
+    static_cast<std::size_t>(input_size_) * 3U * sizeof(float);
+
+  std::size_t output_bytes = 0;
+
+#if NV_TENSORRT_MAJOR >= 10
+  // TensorRT 10+ API
+  const int n_io = engine_->getNbIOTensors();
+  for (int i = 0; i < n_io; ++i) {
+    const char * name = engine_->getIOTensorName(i);
+    const nvinfer1::TensorIOMode mode = engine_->getTensorIOMode(name);
+    const nvinfer1::Dims dims = engine_->getTensorShape(name);
+
+    if (mode == nvinfer1::TensorIOMode::kINPUT) {
+      // expected [1, 3, H, W]
+      (void)dims;
+    } else {
+      // expected [1, num_fields, num_candidates]
+      if (dims.nbDims == 3) {
+        num_fields_ = static_cast<int>(dims.d[1]);
+        num_candidates_ = static_cast<int>(dims.d[2]);
+      }
+      output_bytes =
+        static_cast<std::size_t>(num_fields_) *
+        static_cast<std::size_t>(num_candidates_) * sizeof(float);
+    }
+  }
+#else
+  // TensorRT 8 API
+  const int n_bindings = engine_->getNbBindings();
+  for (int i = 0; i < n_bindings; ++i) {
+    const nvinfer1::Dims dims = engine_->getBindingDimensions(i);
+    if (engine_->bindingIsInput(i)) {
+      input_binding_idx_ = i;
+    } else {
+      output_binding_idx_ = i;
+      if (dims.nbDims == 3) {
+        num_fields_ = static_cast<int>(dims.d[1]);
+        num_candidates_ = static_cast<int>(dims.d[2]);
+      }
+      output_bytes =
+        static_cast<std::size_t>(num_fields_) *
+        static_cast<std::size_t>(num_candidates_) * sizeof(float);
+    }
+  }
+#endif
+
+  if (num_candidates_ <= 0 || num_fields_ < 5) {
+    RCLCPP_ERROR(
+      logger_,
+      "unexpected engine output shape: num_fields=%d num_candidates=%d",
+      num_fields_,
+      num_candidates_);
+    return false;
+  }
+
+  // --- Allocate GPU buffers ---
+  if (cudaMalloc(&gpu_input_, input_bytes) != cudaSuccess ||
+    cudaMalloc(&gpu_output_, output_bytes) != cudaSuccess)
+  {
+    RCLCPP_ERROR(logger_, "cudaMalloc failed for I/O buffers");
+    return false;
+  }
+
+  if (cudaStreamCreate(&stream_) != cudaSuccess) {
+    RCLCPP_ERROR(logger_, "cudaStreamCreate failed");
+    return false;
+  }
+
+  cpu_input_.resize(3 * input_size_ * input_size_);
+  cpu_output_.resize(static_cast<std::size_t>(num_fields_) *
+    static_cast<std::size_t>(num_candidates_));
+
+#if NV_TENSORRT_MAJOR >= 10
+  // Bind tensor addresses once — context retains them across inferences.
+  const int n_io2 = engine_->getNbIOTensors();
+  for (int i = 0; i < n_io2; ++i) {
+    const char * name = engine_->getIOTensorName(i);
+    const nvinfer1::TensorIOMode mode = engine_->getTensorIOMode(name);
+    void * ptr = (mode == nvinfer1::TensorIOMode::kINPUT) ? gpu_input_ : gpu_output_;
+    context_->setTensorAddress(name, ptr);
+  }
+#endif
 
   is_ready_ = true;
+  RCLCPP_INFO(
+    logger_,
+    "TensorRT engine loaded: %s  output=[1,%d,%d]  conf=%.2f  nms=%.2f",
+    model_path.c_str(),
+    num_fields_,
+    num_candidates_,
+    static_cast<double>(conf_threshold_),
+    static_cast<double>(nms_threshold_));
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Infer
+// ---------------------------------------------------------------------------
 
 std::vector<ObjectCandidate> YoloDetector::Infer(const cv::Mat & frame)
 {
@@ -138,243 +311,214 @@ std::vector<ObjectCandidate> YoloDetector::Infer(const cv::Mat & frame)
   }
 
   LetterboxMeta meta;
-  const cv::Mat input = PrepareInput(frame, meta);
-  if (input.empty()) {
+  const cv::Mat letterboxed = PrepareInput(frame, meta);
+  if (letterboxed.empty()) {
     return {};
   }
 
-  cv::Mat blob = cv::dnn::blobFromImage(
-    input,
-    1.0 / 255.0,
-    cv::Size(input_size_, input_size_),
-    cv::Scalar(),
-    true,
-    false);
+  // BGR → RGB, uint8 → float32 [0,1], HWC → CHW
+  cv::Mat rgb;
+  cv::cvtColor(letterboxed, rgb, cv::COLOR_BGR2RGB);
+  cv::Mat float_img;
+  rgb.convertTo(float_img, CV_32F, 1.0 / 255.0);
 
-  net_.setInput(blob);
-  std::vector<cv::Mat> outputs;
-  net_.forward(outputs, net_.getUnconnectedOutLayersNames());
-  if (outputs.empty()) {
+  std::vector<cv::Mat> channels(3);
+  cv::split(float_img, channels);
+  const int plane = input_size_ * input_size_;
+  for (int c = 0; c < 3; ++c) {
+    std::memcpy(cpu_input_.data() + c * plane, channels[c].data, plane * sizeof(float));
+  }
+
+  // Host → Device
+  const std::size_t input_bytes = cpu_input_.size() * sizeof(float);
+  if (cudaMemcpyAsync(
+      gpu_input_,
+      cpu_input_.data(),
+      input_bytes,
+      cudaMemcpyHostToDevice,
+      stream_) != cudaSuccess)
+  {
+    RCLCPP_WARN(logger_, "cudaMemcpyAsync H2D failed");
     return {};
   }
 
-  cv::Mat detections;
-  const cv::Mat & out = outputs.front();
-  if (out.dims == 3) {
-    const int rows = out.size[1];
-    const int cols = out.size[2];
-    detections = cv::Mat(rows, cols, CV_32F, const_cast<float *>(out.ptr<float>()));
-  } else if (out.dims == 2) {
-    detections = out;
-  } else {
-    RCLCPP_WARN(logger_, "unsupported YOLO output rank: %d", out.dims);
+  // Inference
+  bool ok = false;
+#if NV_TENSORRT_MAJOR >= 10
+  ok = context_->enqueueV3(stream_);
+#else
+  void * bindings[2];
+  bindings[input_binding_idx_] = gpu_input_;
+  bindings[output_binding_idx_] = gpu_output_;
+  ok = context_->enqueueV2(bindings, stream_, nullptr);
+#endif
+  if (!ok) {
+    RCLCPP_WARN(logger_, "TensorRT enqueue failed");
     return {};
   }
 
-  if (detections.cols > 6) {
-    return ParseCenterBoxOutput(detections, meta, frame.size());
+  // Device → Host
+  const std::size_t output_bytes = cpu_output_.size() * sizeof(float);
+  if (cudaMemcpyAsync(
+      cpu_output_.data(),
+      gpu_output_,
+      output_bytes,
+      cudaMemcpyDeviceToHost,
+      stream_) != cudaSuccess)
+  {
+    RCLCPP_WARN(logger_, "cudaMemcpyAsync D2H failed");
+    return {};
   }
-  return ParseCornerBoxOutput(detections, meta, frame.size());
+
+  cudaStreamSynchronize(stream_);
+
+  return PostProcess(
+    cpu_output_.data(),
+    num_candidates_,
+    num_fields_,
+    meta,
+    frame.size());
 }
+
+// ---------------------------------------------------------------------------
+// PrepareInput  (letterbox)
+// ---------------------------------------------------------------------------
 
 cv::Mat YoloDetector::PrepareInput(const cv::Mat & frame, LetterboxMeta & meta) const
 {
-  cv::Mat bgr_frame;
+  cv::Mat bgr;
   if (frame.channels() == 1) {
-    cv::cvtColor(frame, bgr_frame, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(frame, bgr, cv::COLOR_GRAY2BGR);
   } else {
-    bgr_frame = frame;
+    bgr = frame;
   }
 
   const float scale = std::min(
-    static_cast<float>(input_size_) / static_cast<float>(bgr_frame.cols),
-    static_cast<float>(input_size_) / static_cast<float>(bgr_frame.rows));
+    static_cast<float>(input_size_) / static_cast<float>(bgr.cols),
+    static_cast<float>(input_size_) / static_cast<float>(bgr.rows));
 
-  const int resized_w = static_cast<int>(std::round(bgr_frame.cols * scale));
-  const int resized_h = static_cast<int>(std::round(bgr_frame.rows * scale));
-  const int pad_x = (input_size_ - resized_w) / 2;
-  const int pad_y = (input_size_ - resized_h) / 2;
+  const int rw = static_cast<int>(std::round(bgr.cols * scale));
+  const int rh = static_cast<int>(std::round(bgr.rows * scale));
+  const int pad_x = (input_size_ - rw) / 2;
+  const int pad_y = (input_size_ - rh) / 2;
 
   cv::Mat resized;
-  cv::resize(bgr_frame, resized, cv::Size(resized_w, resized_h));
+  cv::resize(bgr, resized, cv::Size(rw, rh));
 
-  cv::Mat letterboxed(
-    input_size_,
-    input_size_,
-    CV_8UC3,
-    cv::Scalar(kLetterboxPaddingValue, kLetterboxPaddingValue, kLetterboxPaddingValue));
-  resized.copyTo(letterboxed(cv::Rect(pad_x, pad_y, resized_w, resized_h)));
+  cv::Mat out(
+    input_size_, input_size_, CV_8UC3,
+    cv::Scalar(114, 114, 114));
+  resized.copyTo(out(cv::Rect(pad_x, pad_y, rw, rh)));
 
   meta.scale = scale;
   meta.pad_x = pad_x;
   meta.pad_y = pad_y;
-  return letterboxed;
+  return out;
 }
 
-std::vector<ObjectCandidate> YoloDetector::ParseCenterBoxOutput(
-  const cv::Mat & detections,
+// ---------------------------------------------------------------------------
+// PostProcess
+//
+// Output tensor layout: [1, num_fields, num_candidates]  (row-major)
+//   → data[field * num_candidates + candidate_idx]
+//
+// Ultralytics YOLO single-class:  num_fields = 5  (cx, cy, w, h, score)
+// Multi-class:                    num_fields = 4 + N
+// ---------------------------------------------------------------------------
+
+std::vector<ObjectCandidate> YoloDetector::PostProcess(
+  const float * output,
+  int num_candidates,
+  int num_fields,
   const LetterboxMeta & meta,
   const cv::Size & original_size) const
 {
-  std::vector<cv::Rect> candidate_boxes;
-  std::vector<float> candidate_scores;
-  std::vector<int> candidate_class_ids;
+  const int num_classes = num_fields - 4;
 
-  for (int row = 0; row < detections.rows; ++row) {
-    const float * data = detections.ptr<float>(row);
-    const float objectness = data[4];
-    if (objectness <= 0.0F) {
-      continue;
-    }
+  std::vector<cv::Rect> boxes;
+  std::vector<float> scores;
+  std::vector<int> class_ids;
 
-    int best_class = -1;
-    float best_class_score = 0.0F;
-    for (int cls_idx = 5; cls_idx < detections.cols; ++cls_idx) {
-      const float score = data[cls_idx];
-      if (score > best_class_score) {
-        best_class_score = score;
-        best_class = cls_idx - 5;
+  for (int i = 0; i < num_candidates; ++i) {
+    // Access each field for this candidate via column-major stride.
+    const float cx = output[0 * num_candidates + i];
+    const float cy = output[1 * num_candidates + i];
+    const float w = output[2 * num_candidates + i];
+    const float h = output[3 * num_candidates + i];
+
+    int best_class = 0;
+    float confidence = 0.0F;
+
+    if (num_classes == 1) {
+      confidence = output[4 * num_candidates + i];
+      best_class = 0;
+    } else {
+      for (int c = 0; c < num_classes; ++c) {
+        const float s = output[(4 + c) * num_candidates + i];
+        if (s > confidence) {
+          confidence = s;
+          best_class = c;
+        }
       }
     }
 
-    const float confidence = objectness * best_class_score;
-    if (best_class < 0 || confidence < conf_threshold_) {
-      continue;
-    }
-
-    const float cx = data[0];
-    const float cy = data[1];
-    const float w = data[2];
-    const float h = data[3];
-
-    const float x0 = (cx - (w * 0.5F) - static_cast<float>(meta.pad_x)) / meta.scale;
-    const float y0 = (cy - (h * 0.5F) - static_cast<float>(meta.pad_y)) / meta.scale;
-    const float ww = w / meta.scale;
-    const float hh = h / meta.scale;
-
-    cv::Rect box(
-      static_cast<int>(std::round(x0)),
-      static_cast<int>(std::round(y0)),
-      static_cast<int>(std::round(ww)),
-      static_cast<int>(std::round(hh)));
-    box = ClipRect(box, original_size);
-    if (box.area() <= 0) {
-      continue;
-    }
-
-    candidate_boxes.push_back(box);
-    candidate_scores.push_back(confidence);
-    candidate_class_ids.push_back(best_class);
-  }
-
-  std::vector<int> kept_indices;
-  cv::dnn::NMSBoxes(candidate_boxes, candidate_scores, conf_threshold_, nms_threshold_, kept_indices);
-
-  std::vector<ObjectCandidate> results;
-  results.reserve(kept_indices.size());
-  for (int index : kept_indices) {
-    ObjectCandidate candidate;
-    candidate.class_id = candidate_class_ids[index];
-    candidate.class_name = ResolveClassName(candidate.class_id);
-    candidate.score = candidate_scores[index];
-    candidate.bbox = candidate_boxes[index];
-    results.push_back(std::move(candidate));
-  }
-  return results;
-}
-
-std::vector<ObjectCandidate> YoloDetector::ParseCornerBoxOutput(
-  const cv::Mat & detections,
-  const LetterboxMeta & meta,
-  const cv::Size & original_size) const
-{
-  std::vector<cv::Rect> candidate_boxes;
-  std::vector<float> candidate_scores;
-  std::vector<int> candidate_class_ids;
-
-  for (int row = 0; row < detections.rows; ++row) {
-    const float * data = detections.ptr<float>(row);
-    const float confidence = data[4];
     if (confidence < conf_threshold_) {
       continue;
     }
 
-    int class_id = 0;
-    if (detections.cols >= 6) {
-      class_id = static_cast<int>(std::round(data[5]));
-    }
-
-    float x1 = data[0];
-    float y1 = data[1];
-    float x2 = data[2];
-    float y2 = data[3];
-
-    // Some exported models output normalized coordinates.
-    if (x2 <= 1.5F && y2 <= 1.5F) {
-      x1 *= static_cast<float>(input_size_);
-      y1 *= static_cast<float>(input_size_);
-      x2 *= static_cast<float>(input_size_);
-      y2 *= static_cast<float>(input_size_);
-    }
-
-    x1 = (x1 - static_cast<float>(meta.pad_x)) / meta.scale;
-    y1 = (y1 - static_cast<float>(meta.pad_y)) / meta.scale;
-    x2 = (x2 - static_cast<float>(meta.pad_x)) / meta.scale;
-    y2 = (y2 - static_cast<float>(meta.pad_y)) / meta.scale;
-
-    x1 = ClipFloat(x1, 0.0F, static_cast<float>(original_size.width));
-    y1 = ClipFloat(y1, 0.0F, static_cast<float>(original_size.height));
-    x2 = ClipFloat(x2, 0.0F, static_cast<float>(original_size.width));
-    y2 = ClipFloat(y2, 0.0F, static_cast<float>(original_size.height));
+    // Undo letterbox: map from padded input space back to original image.
+    const float x0 = (cx - w * 0.5F - static_cast<float>(meta.pad_x)) / meta.scale;
+    const float y0 = (cy - h * 0.5F - static_cast<float>(meta.pad_y)) / meta.scale;
+    const float bw = w / meta.scale;
+    const float bh = h / meta.scale;
 
     cv::Rect box(
-      static_cast<int>(std::round(x1)),
-      static_cast<int>(std::round(y1)),
-      static_cast<int>(std::round(std::max(0.0F, x2 - x1))),
-      static_cast<int>(std::round(std::max(0.0F, y2 - y1))));
+      static_cast<int>(std::round(x0)),
+      static_cast<int>(std::round(y0)),
+      static_cast<int>(std::round(bw)),
+      static_cast<int>(std::round(bh)));
     box = ClipRect(box, original_size);
     if (box.area() <= 0) {
       continue;
     }
 
-    candidate_boxes.push_back(box);
-    candidate_scores.push_back(confidence);
-    candidate_class_ids.push_back(class_id);
+    boxes.push_back(box);
+    scores.push_back(confidence);
+    class_ids.push_back(best_class);
   }
 
-  std::vector<int> kept_indices;
-  cv::dnn::NMSBoxes(candidate_boxes, candidate_scores, conf_threshold_, nms_threshold_, kept_indices);
+  std::vector<int> kept;
+  cv::dnn::NMSBoxes(boxes, scores, conf_threshold_, nms_threshold_, kept);
 
   std::vector<ObjectCandidate> results;
-  results.reserve(kept_indices.size());
-  for (int index : kept_indices) {
-    ObjectCandidate candidate;
-    candidate.class_id = candidate_class_ids[index];
-    candidate.class_name = ResolveClassName(candidate.class_id);
-    candidate.score = candidate_scores[index];
-    candidate.bbox = candidate_boxes[index];
-    results.push_back(std::move(candidate));
+  results.reserve(kept.size());
+  for (const int idx : kept) {
+    ObjectCandidate c;
+    c.class_id = class_ids[idx];
+    c.class_name = ResolveClassName(c.class_id);
+    c.score = scores[idx];
+    c.bbox = boxes[idx];
+    results.push_back(std::move(c));
   }
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 std::string YoloDetector::ResolveClassName(int class_id) const
 {
   const auto it = class_map_.find(class_id);
-  if (it != class_map_.end()) {
-    return it->second;
-  }
-  return "class_" + std::to_string(class_id);
+  return (it != class_map_.end()) ? it->second : "class_" + std::to_string(class_id);
 }
 
 cv::Rect YoloDetector::ClipRect(const cv::Rect & box, const cv::Size & frame_size) const
 {
   const int x = std::max(0, box.x);
   const int y = std::max(0, box.y);
-  const int max_w = frame_size.width - x;
-  const int max_h = frame_size.height - y;
-  const int w = std::max(0, std::min(box.width, max_w));
-  const int h = std::max(0, std::min(box.height, max_h));
+  const int w = std::max(0, std::min(box.width, frame_size.width - x));
+  const int h = std::max(0, std::min(box.height, frame_size.height - y));
   return cv::Rect(x, y, w, h);
 }
 

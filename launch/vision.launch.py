@@ -9,26 +9,37 @@ def generate_launch_description():
     package_share = FindPackageShare("vtol_vision")
     default_params_file = PathJoinSubstitution([package_share, "config", "vision_params.yaml"])
     default_class_map_file = PathJoinSubstitution([package_share, "config", "class_map.example.yaml"])
+    # Engine path is overridden at runtime on the target device.
+    # Generate best.engine on the Jetson with: yolo export model=best.pt format=engine device=0
+    default_engine_path = ""
 
     params_file_arg = DeclareLaunchArgument(
         "params_file",
         default_value=default_params_file,
-        description="ROS2 parameter file for vision_node",
+        description="ROS2 parameter YAML for vision_node",
     )
     camera_uri_arg = DeclareLaunchArgument(
         "camera_uri",
         default_value="0",
-        description="camera index or stream path",
+        description=(
+            "Camera index (e.g. '0') or GStreamer pipeline string for CSI cameras. "
+            "Example CSI pipeline: "
+            "'nvarguscamerasrc ! video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1 "
+            "! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! appsink'"
+        ),
     )
     trt_engine_path_arg = DeclareLaunchArgument(
         "trt_engine_path",
-        default_value="",
-        description="ONNX/TensorRT model path used by YOLO backend",
+        default_value=default_engine_path,
+        description=(
+            "Absolute path to a TensorRT .engine file generated on this device. "
+            "Must match the Jetson GPU architecture — cannot be transferred from another machine."
+        ),
     )
     class_map_yaml_arg = DeclareLaunchArgument(
         "class_map_yaml",
         default_value=default_class_map_file,
-        description="class map yaml for YOLO class id to display name",
+        description="YAML mapping class id → display name",
     )
 
     vision_node = Node(
@@ -55,4 +66,3 @@ def generate_launch_description():
             vision_node,
         ]
     )
-

@@ -15,6 +15,25 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
+# --- CUDA ---
+find_package(CUDA REQUIRED)
+
+# --- TensorRT ---
+# Install: sudo apt install tensorrt libnvinfer-dev libnvinfer-plugin-dev
+find_library(NVINFER_LIB nvinfer
+  HINTS
+    /usr/lib/aarch64-linux-gnu
+    /usr/lib/x86_64-linux-gnu
+    /usr/local/lib
+  REQUIRED)
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+  HINTS
+    /usr/include/aarch64-linux-gnu
+    /usr/include/x86_64-linux-gnu
+    /usr/local/include
+  REQUIRED)
+message(STATUS "TensorRT: ${NVINFER_LIB}  include: ${TENSORRT_INCLUDE_DIR}")
+
 set(msg_files
   "msg/ArucoDetection.msg"
   "msg/ObjectDetection.msg"
@@ -33,9 +52,15 @@ target_include_directories(yolo_detector
     $<INSTALL_INTERFACE:include>
   PRIVATE
     ${OpenCV_INCLUDE_DIRS}
+    ${TENSORRT_INCLUDE_DIR}
+    ${CUDA_INCLUDE_DIRS}
 )
 ament_target_dependencies(yolo_detector rclcpp)
-target_link_libraries(yolo_detector ${OpenCV_LIBRARIES})
+target_link_libraries(yolo_detector
+  ${OpenCV_LIBRARIES}
+  ${NVINFER_LIB}
+  ${CUDA_LIBRARIES}
+)
 
 add_executable(vision_node
   src/main.cpp
@@ -80,8 +105,18 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_yolo_config test/test_yolo_config.cpp)
   if(TARGET test_yolo_config)
-    target_include_directories(test_yolo_config PRIVATE include ${OpenCV_INCLUDE_DIRS})
-    target_link_libraries(test_yolo_config yolo_detector ${OpenCV_LIBRARIES})
+    target_include_directories(test_yolo_config PRIVATE
+      include
+      ${OpenCV_INCLUDE_DIRS}
+      ${TENSORRT_INCLUDE_DIR}
+      ${CUDA_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_yolo_config
+      yolo_detector
+      ${OpenCV_LIBRARIES}
+      ${NVINFER_LIB}
+      ${CUDA_LIBRARIES}
+    )
     ament_target_dependencies(test_yolo_config rclcpp)
   endif()
 endif()

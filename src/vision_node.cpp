@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -19,8 +20,7 @@ namespace
 std::unordered_map<int, std::string> DefaultClassMap()
 {
   return {
-    {0, "basket"},
-    {1, "red_cross"}
+    {0, "mannequin"}
   };
 }
 
@@ -76,8 +76,23 @@ VisionNode::VisionNode()
       pub_queue_depth_);
   }
 
-  aruco_dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50);
+  aruco_dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_50);
   aruco_parameters_ = cv::aruco::DetectorParameters::create();
+
+  // --- 고도 40m 소형 마커 탐지 튜닝 ---
+  // 작은 겉보기 크기를 허용: 기본값 0.03 → 0.02
+  aruco_parameters_->minMarkerPerimeterRate = aruco_min_perimeter_rate_;
+  // 넓은 adaptive threshold 윈도우 범위 → 작은 셀도 이진화 가능
+  aruco_parameters_->adaptiveThreshWinSizeMin = 3;
+  aruco_parameters_->adaptiveThreshWinSizeMax = 53;
+  aruco_parameters_->adaptiveThreshWinSizeStep = 10;
+  // 원거리 투시 왜곡 허용 범위 약간 완화
+  aruco_parameters_->polygonalApproxAccuracyRate = 0.05;
+  // 서브픽셀 코너 정제 → 포즈 추정 정확도 향상
+  aruco_parameters_->cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;
+  aruco_parameters_->cornerRefinementWinSize = 5;
+  aruco_parameters_->cornerRefinementMaxIterations = 30;
+  aruco_parameters_->cornerRefinementMinAccuracy = 0.1;
 
   if (!LoadCameraCalibration(camera_info_yaml_)) {
     RCLCPP_WARN(
@@ -117,6 +132,15 @@ VisionNode::VisionNode()
     RCLCPP_WARN(
       this->get_logger(),
       "YOLO is disabled until trt_engine_path points to a readable model.");
+  } else {
+    RCLCPP_INFO(
+      this->get_logger(),
+      "YOLO ready: model=%s input=%d conf=%.2f nms=%.2f class_map=%s",
+      trt_engine_path_.c_str(),
+      yolo_input_size_,
+      static_cast<double>(conf_thr_),
+      static_cast<double>(nms_thr_),
+      class_map_yaml_.empty() ? "<default>" : class_map_yaml_.c_str());
   }
 
   running_.store(true);
@@ -151,13 +175,16 @@ void VisionNode::LoadParameters()
   class_map_yaml_ = this->declare_parameter<std::string>("class_map_yaml", "");
   conf_thr_ = static_cast<float>(this->declare_parameter<double>("conf_thr", 0.25));
   nms_thr_ = static_cast<float>(this->declare_parameter<double>("nms_thr", 0.45));
+  aruco_min_perimeter_rate_ = this->declare_parameter<double>("aruco_min_perimeter_rate", 0.02);
   yolo_input_size_ = this->declare_parameter<int>("yolo_input_size", 640);
   frame_width_ = this->declare_parameter<int>("frame_width", 640);
   frame_height_ = this->declare_parameter<int>("frame_height", 480);
   camera_fps_ = this->declare_parameter<int>("camera_fps", 30);
   yolo_period_ms_ = this->declare_parameter<int>("yolo_period_ms", 50);
+  yolo_debug_log_period_ms_ = this->declare_parameter<int>("yolo_debug_log_period_ms", 2000);
   pub_queue_depth_ = this->declare_parameter<int>("queue_size", 10);
   enable_debug_image_ = this->declare_parameter<bool>("enable_debug_image", false);
+  enable_yolo_debug_log_ = this->declare_parameter<bool>("enable_yolo_debug_log", true);
   undistort_image_ = this->declare_parameter<bool>("undistort_image", true);
 
   allowed_ids_.clear();
@@ -313,6 +340,28 @@ void VisionNode::YoloLoop()
     header.stamp = frame_copy.stamp;
     header.frame_id = frame_id_;
     PublishObjectDetections(header, detections, frame_copy.stamp);
+
+    if (enable_yolo_debug_log_) {
+      float best_score = 0.0F;
+      for (const auto & detection : detections) {
+        best_score = std::max(best_score, detection.score);
+      }
+
+      std::ostringstream summary;
+      summary << "YOLO detections=" << detections.size();
+      if (!detections.empty()) {
+        summary << " best=" << detections.front().class_name
+                << " score=" << best_score;
+      }
+      summary << " frame=" << frame_copy.image.cols << "x" << frame_copy.image.rows;
+
+      RCLCPP_INFO_THROTTLE(
+        this->get_logger(),
+        *this->get_clock(),
+        yolo_debug_log_period_ms_,
+        "%s",
+        summary.str().c_str());
+    }
 
     if (yolo_period_ms_ > 0) {
       const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <NvInfer.h>
+#include <cuda_runtime_api.h>
 #include <opencv2/core.hpp>
-#include <opencv2/dnn.hpp>
+#include <opencv2/dnn.hpp>  // cv::dnn::NMSBoxes
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -24,6 +26,7 @@ class YoloDetector
 {
 public:
   explicit YoloDetector(rclcpp::Logger logger);
+  ~YoloDetector();
 
   static bool LoadClassMap(
     const std::string & yaml_path,
@@ -48,20 +51,49 @@ private:
     int pad_y{0};
   };
 
+  // Minimal TensorRT logger — only surfaces errors and warnings.
+  class TrtLogger : public nvinfer1::ILogger
+  {
+  public:
+    void log(Severity severity, const char * msg) noexcept override;
+  };
+
   cv::Mat PrepareInput(const cv::Mat & frame, LetterboxMeta & meta) const;
-  std::vector<ObjectCandidate> ParseCenterBoxOutput(
-    const cv::Mat & detections,
+
+  // Parse output tensor [1, num_fields, num_candidates] (column-major over candidates).
+  // Ultralytics single-class: num_fields=5 (cx,cy,w,h,score).
+  // Multi-class: num_fields=4+N.
+  std::vector<ObjectCandidate> PostProcess(
+    const float * output,
+    int num_candidates,
+    int num_fields,
     const LetterboxMeta & meta,
     const cv::Size & original_size) const;
-  std::vector<ObjectCandidate> ParseCornerBoxOutput(
-    const cv::Mat & detections,
-    const LetterboxMeta & meta,
-    const cv::Size & original_size) const;
+
   std::string ResolveClassName(int class_id) const;
   cv::Rect ClipRect(const cv::Rect & box, const cv::Size & frame_size) const;
 
   rclcpp::Logger logger_;
-  cv::dnn::Net net_;
+  TrtLogger trt_logger_;
+
+  nvinfer1::IRuntime * runtime_{nullptr};
+  nvinfer1::ICudaEngine * engine_{nullptr};
+  nvinfer1::IExecutionContext * context_{nullptr};
+
+  void * gpu_input_{nullptr};
+  void * gpu_output_{nullptr};
+  std::vector<float> cpu_input_;
+  std::vector<float> cpu_output_;
+  cudaStream_t stream_{nullptr};
+
+  // Determined at Initialize() from engine binding shapes.
+  int num_candidates_{0};  // e.g. 8400 for 640-input YOLO
+  int num_fields_{0};       // 4 + num_classes
+
+  // Binding indices (TRT 8 enqueueV2).
+  int input_binding_idx_{0};
+  int output_binding_idx_{1};
+
   bool is_ready_{false};
   int input_size_{640};
   float conf_threshold_{0.25F};
@@ -70,4 +102,3 @@ private:
 };
 
 }  // namespace vtol_vision
-

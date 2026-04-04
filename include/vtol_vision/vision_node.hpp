@@ -81,13 +81,16 @@ private:
   std::string class_map_yaml_;
   float conf_thr_{0.25F};
   float nms_thr_{0.45F};
+  double aruco_min_perimeter_rate_{0.02};
   int yolo_input_size_{640};
   int frame_width_{640};
   int frame_height_{480};
   int camera_fps_{30};
   int yolo_period_ms_{50};
+  int yolo_debug_log_period_ms_{2000};
   int pub_queue_depth_{10};
   bool enable_debug_image_{false};
+  bool enable_yolo_debug_log_{true};
   bool undistort_image_{true};
 
   // Runtime state

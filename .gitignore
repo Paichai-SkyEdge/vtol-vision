@@ -4,3 +4,9 @@ __pycache__/
 build/
 install/
 log/
+.ultralytics_config/
+datasets/
+runs/
+*.pt
+*.onnx
+*.engine
