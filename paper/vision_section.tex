@@ -1,0 +1,200 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{kotex}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds}
+\usepackage[top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm]{geometry}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{indentfirst}
+
+\setlength{\parskip}{2pt}
+\setlength{\parindent}{1em}
+
+\captionsetup{font=small, labelfont=bf, skip=4pt}
+
+% ─────────────────────────────────────────────────────────────
+\begin{document}
+
+\section*{3. 비전 시스템}
+
+\subsection*{3.1 개요}
+
+비전 시스템은 VTOL 기체의 자율 임무 수행을 위해 두 가지 탐지 기능을 실시간으로
+제공한다. 첫째, ArUco 마커를 이용한 착륙 지점의 6자유도(6-DoF) 포즈 추정이며,
+둘째, YOLO11n을 이용한 인명(마네킹) 탐지이다. 시스템은 NVIDIA Jetson Orin Nano
+Super에 탑재되며 ROS2 Humble 미들웨어를 기반으로 동작한다.
+
+% ─────────────────────────────────────────────────────────────
+\subsection*{3.2 시스템 구조}
+
+비전 시스템은 두 개의 독립 스레드로 구성된 이중 파이프라인 구조를 채택한다
+(그림~\ref{fig:arch}). \textbf{CaptureLoop}는 카메라 영상을 획득하여 ArUco
+탐지 및 포즈 추정을 수행한 뒤 \texttt{/vision/aruco} 토픽을 발행한다.
+\textbf{YoloLoop}는 공유 프레임 버퍼에서 최신 프레임을 비동기적으로 읽어
+GPU 추론을 수행하고 \texttt{/vision/objects}를 발행한다. 두 스레드를 분리함으로써
+카메라 캡처(30\,fps)와 GPU 추론(20--50\,fps)의 속도 차이를 흡수하고
+프레임 손실을 방지한다.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  box/.style  = {draw, rounded corners=2pt, minimum width=3.0cm,
+                 minimum height=0.58cm, font=\small, align=center},
+  topic/.style= {draw, dashed, rounded corners=2pt, minimum width=3.0cm,
+                 minimum height=0.52cm, font=\footnotesize\ttfamily,
+                 fill=gray!12, align=center},
+  buf/.style  = {draw, rounded corners=2pt, minimum width=2.4cm,
+                 minimum height=0.78cm, font=\small, align=center,
+                 fill=yellow!25},
+  arr/.style  = {-{Stealth[length=4pt]}, thick},
+]
+%% ── CaptureLoop (왼쪽) ──
+\node[box, fill=blue!10]  (cam)    at (0, 0)     {카메라 입력};
+\node[box, fill=blue!10]  (undist) at (0,-1.15)  {렌즈 왜곡 보정};
+\node[box, fill=blue!10]  (aruco)  at (0,-2.30)  {ArUco 탐지 \&\\포즈 추정};
+\node[topic]              (t1)     at (0,-3.35)  {/vision/aruco};
+
+%% ── 공유 버퍼 (가운데) ──
+\node[buf] (buf) at (4.6,-1.15) {공유 프레임\\버퍼 (mutex)};
+
+%% ── YoloLoop (오른쪽) ──
+\node[box, fill=green!10] (pre)    at (9.2,-1.15) {Letterbox 전처리};
+\node[box, fill=green!10] (trt)    at (9.2,-2.30) {TensorRT FP16};
+\node[box, fill=green!10] (nms)    at (9.2,-3.35) {NMS 후처리};
+\node[topic]              (t2)     at (9.2,-4.40) {/vision/objects};
+
+%% ── 화살표 ──
+\draw[arr] (cam)    -- (undist);
+\draw[arr] (undist) -- (aruco);
+\draw[arr] (aruco)  -- (t1);
+\draw[arr] (undist) -- (buf);
+\draw[arr] (buf)    -- (pre);
+\draw[arr] (pre)    -- (trt);
+\draw[arr] (trt)    -- (nms);
+\draw[arr] (nms)    -- (t2);
+
+%% ── 스레드 레이블 ──
+\node[font=\small\bfseries, text=blue!60!black]  at (0,   0.55) {CaptureLoop (CPU)};
+\node[font=\small\bfseries, text=green!50!black] at (9.2, 0.55) {YoloLoop (GPU)};
+\end{tikzpicture}
+\caption{이중 파이프라인 비전 시스템 구조도}
+\label{fig:arch}
+\end{figure}
+
+% ─────────────────────────────────────────────────────────────
+\subsection*{3.3 ArUco 마커 기반 착륙 포즈 추정}
+
+핀홀 카메라 모델에 따라 3차원 공간 점 $\mathbf{P}=[X,Y,Z]^\top$은 내부
+파라미터 행렬 $K$와 외부 파라미터 $[R\mid\mathbf{t}]$를 통해 영상 좌표
+$[u,v]^\top$으로 투영된다.
+
+\begin{equation}
+  s\begin{bmatrix}u\\v\\1\end{bmatrix}
+  = K\,[R\mid\mathbf{t}]\,
+    \begin{bmatrix}X\\Y\\Z\\1\end{bmatrix},
+  \qquad
+  K = \begin{bmatrix}f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1\end{bmatrix}
+  \label{eq:proj}
+\end{equation}
+
+여기서 $f_x,\,f_y$는 초점 거리, $(c_x,\,c_y)$는 주점(principal point)이다.
+ArUco 마커의 4개 모서리 점을 관측값으로 하여 PnP(Perspective-$n$-Point) 문제를
+풀면 회전 행렬 $R\in SO(3)$와 이동 벡터 $\mathbf{t}\in\mathbb{R}^3$을 추정한다.
+
+\begin{equation}
+  [R^*,\,\mathbf{t}^*]
+  = \mathop{\arg\min}_{R,\,\mathbf{t}}
+    \sum_{i=1}^{N}
+    \bigl\|\mathbf{p}_i - \pi(K,R,\mathbf{t},\mathbf{P}_i)\bigr\|_2^2
+  \label{eq:pnp}
+\end{equation}
+
+추정 품질은 재투영 오차(reprojection error) $\varepsilon$으로 정량화하며,
+이를 신뢰도 $c \in (0,1]$로 변환하여 발행한다.
+
+\begin{equation}
+  \varepsilon
+  = \frac{1}{N}\sum_{i=1}^{N}
+    \bigl\|\mathbf{p}_i - \pi(K,R^*,\mathbf{t}^*,\mathbf{P}_i)\bigr\|_2,
+  \qquad
+  c = \frac{1}{1+\varepsilon}
+  \label{eq:reproj}
+\end{equation}
+
+40\,m 고도에서의 소형 마커 탐지를 위해 적응적 임계값 윈도우를 3--53\,px으로
+확대하고, 서브픽셀 코너 정밀화(CORNER\_REFINE\_SUBPIX, 최대 30회 반복)를
+적용하여 원거리 정확도를 향상시켰다.
+
+% ─────────────────────────────────────────────────────────────
+\subsection*{3.4 YOLO11n 기반 인명 탐지}
+
+YOLO11n 모델은 $640\times640$ 고정 입력을 요구하므로, 종횡비를 보존하면서
+패딩을 추가하는 Letterbox 전처리를 수행한다.
+
+\begin{equation}
+  s = \min\!\left(\frac{W_\mathrm{in}}{W_\mathrm{src}},\;
+                  \frac{H_\mathrm{in}}{H_\mathrm{src}}\right),
+  \qquad
+  \Delta w = W_\mathrm{in} - s\,W_\mathrm{src},
+  \qquad
+  \Delta h = H_\mathrm{in} - s\,H_\mathrm{src}
+  \label{eq:letterbox}
+\end{equation}
+
+전처리된 영상은 FP32로 정규화($[0,255]\to[0,1]$)하고 HWC$\to$CHW 형식으로
+변환한 뒤 TensorRT FP16 엔진에 CUDA 스트림을 통해 비동기 전송된다. 출력
+텐서의 형상은 $[1,\,5,\,8400]$으로, 5개 필드는 $(c_x,\,c_y,\,w,\,h,\,\mathrm{conf})$이다.
+
+신뢰도 임계값($\theta_\mathrm{conf}=0.25$) 이상의 후보를 선별한 뒤, IoU 기반
+비최대 억제(NMS)로 중복 탐지를 제거한다.
+
+\begin{equation}
+  \mathrm{IoU}(A,B) = \frac{|A\cap B|}{|A\cup B|},
+  \qquad
+  b_j\;\text{제거 조건:}\;\mathrm{IoU}(b_i,b_j)>\theta_\mathrm{NMS}
+  \;\wedge\; s_j < s_i
+  \label{eq:nms}
+\end{equation}
+
+Jetson Orin Nano Super에서 TensorRT FP16 적용 시 CPU 대비 약 6--12배의
+속도 향상이 기대되며, 전체 파이프라인 지연 시간은 15--30\,ms를 목표로 한다.
+
+% ─────────────────────────────────────────────────────────────
+\subsection*{3.5 실험 결과}
+
+표~\ref{tab:perf}는 마네킹 데이터셋(검증 26장)에서의 YOLO11n 탐지 성능 및
+플랫폼별 추론 지연 시간이다. TensorRT FP16 수치는 Jetson 목표값이다.
+
+\begin{table}[H]
+\centering
+\caption{비전 시스템 성능}
+\label{tab:perf}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{구성} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{추론 지연 (ms)} \\
+\midrule
+YOLO11n — CPU (OpenCV DNN)  & 0.962 & 0.962 & 0.962 & 59 \\
+YOLO11n — TensorRT FP16     & ---   & ---   & ---   & 5--10 \\
+ArUco 포즈 추정 (CPU)        & ---   & ---   & ---   & $<$2   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\fbox{\rule{0pt}{4.5cm}\rule{13cm}{0pt}}
+\caption{비전 시스템 탐지 결과 예시.
+  좌: ArUco 마커 3축 오버레이 및 ID 표시,
+  우: YOLO11n 인명 탐지 바운딩 박스 및 신뢰도.}
+\label{fig:result}
+\end{figure}
+
+그림~\ref{fig:result}와 같이 두 파이프라인은 동시에 동작하며, ArUco 포즈 추정과
+인명 탐지 결과를 각각 독립 ROS2 토픽으로 상위 제어 시스템에 전달한다.
+
+\end{document}

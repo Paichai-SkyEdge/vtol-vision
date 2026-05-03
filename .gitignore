@@ -10,3 +10,10 @@ runs/
 *.pt
 *.onnx
 *.engine
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
