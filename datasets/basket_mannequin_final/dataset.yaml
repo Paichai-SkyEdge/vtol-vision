@@ -1,0 +1,8 @@
+path: /home/dev/vtol-vision/datasets/basket_mannequin_final
+train: train/images
+val: val/images
+
+nc: 2
+names:
+  0: basket
+  1: mannequin

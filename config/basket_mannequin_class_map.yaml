@@ -1,0 +1,5 @@
+%YAML:1.0
+---
+class_names:
+  - basket
+  - mannequin

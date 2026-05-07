@@ -1,0 +1,26 @@
+<annotation>
+	<folder>skyedge_vision_relabel</folder>
+	<filename>20260506_213917_geo03.jpg</filename>
+	<path>/home/dev/vtol-vision/images/skyedge_vision_relabel/20260506_213917_geo03.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>906</width>
+		<height>1208</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>basket</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>149</xmin>
+			<ymin>463</ymin>
+			<xmax>318</xmax>
+			<ymax>603</ymax>
+		</bndbox>
+	</object>
+</annotation>

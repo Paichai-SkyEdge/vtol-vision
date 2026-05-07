@@ -1,0 +1,26 @@
+<annotation>
+	<folder>skyedge_vision</folder>
+	<filename>20260506_214027.jpg</filename>
+	<path>/home/dev/vtol-vision/images/skyedge_vision/20260506_214027.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>3060</width>
+		<height>4080</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>mannequin</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>713</xmin>
+			<ymin>1131</ymin>
+			<xmax>2096</xmax>
+			<ymax>2925</ymax>
+		</bndbox>
+	</object>
+</annotation>
