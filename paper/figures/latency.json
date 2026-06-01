@@ -1,0 +1,17 @@
+{
+  "PyTorch FP32 (.pt)": {
+    "mean": 558.03,
+    "std": 8.27,
+    "p95": 574.85
+  },
+  "ONNX Runtime (CPU)": {
+    "mean": 106.59,
+    "std": 2.54,
+    "p95": 110.25
+  },
+  "TensorRT FP16 (.engine)": {
+    "mean": 4.56,
+    "std": 0.12,
+    "p95": 4.56
+  }
+}
