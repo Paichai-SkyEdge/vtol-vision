@@ -37,26 +37,27 @@ python3 -c "from ultralytics import YOLO; print('OK')"
 > **중요:** `.engine` 파일은 반드시 **이 Jetson 위에서** 생성해야 합니다.  
 > 다른 GPU(개발 PC 등)에서 만든 engine은 GPU 아키텍처가 달라 동작하지 않습니다.
 
-사전 학습 모델 Release:
-- <https://github.com/Paichai-SkyEdge/vtol-vision/releases/tag/mannequin-model-v1>
-- 포함 자산: `best.pt`, `best.onnx`
+사전 학습 모델은 레포의 `weights/` 아래에 같이 포함되어 있습니다.
+
+| 경로 | 설명 |
+|---|---|
+| `weights/mannequin_yolo11n/best.pt` | ROS 노드용 mannequin 단일 클래스 모델 |
+| `weights/basket_mannequin_yolo11n/best.pt` | RealSense/검증용 basket+mannequin 2-class 모델 |
 
 ```bash
-# best.pt 다운로드
-mkdir -p ~/vtol-vision/weights
-cd ~/vtol-vision/weights
-wget https://github.com/Paichai-SkyEdge/vtol-vision/releases/download/mannequin-model-v1/best.pt
+# 레포에 포함된 best.pt에서 engine 생성
+cd ~/ros2_ws/src/vtol_vision
 
 # Jetson에서 engine 생성
 yolo export \
-    model=best.pt \
+    model=weights/mannequin_yolo11n/best.pt \
     format=engine \
     device=0 \
     imgsz=640 \
     half=True        # FP16 — Orin Ampere GPU 성능 최대화
 ```
 
-생성 완료 후 `best.engine` 파일이 같은 디렉토리에 생성됩니다.  
+생성 완료 후 `weights/mannequin_yolo11n/best.engine` 파일이 같은 디렉토리에 생성됩니다.
 생성 시간: 약 5~15분 (첫 실행 시 최적화 포함)
 
 ---
@@ -139,7 +140,7 @@ vision_node:
     camera_fps: 30
 
     # --- 모델 경로 (Jetson에서 생성한 engine) ---
-    trt_engine_path: "/home/<user>/vtol-vision/weights/best.engine"
+    trt_engine_path: "/home/<user>/ros2_ws/src/vtol_vision/weights/mannequin_yolo11n/best.engine"
 
     # --- 검출 임계값 (비행 전 지상에서 튜닝 권장) ---
     conf_thr: 0.25
@@ -162,11 +163,11 @@ source ~/ros2_ws/install/setup.bash
 
 # 기본 실행 (params.yaml 경로는 패키지 share에서 로드)
 ros2 launch vtol_vision vision.launch.py \
-    trt_engine_path:=/home/<user>/vtol-vision/weights/best.engine
+    trt_engine_path:=/home/<user>/ros2_ws/src/vtol_vision/weights/mannequin_yolo11n/best.engine
 
 # CSI 카메라 사용 시
 ros2 launch vtol_vision vision.launch.py \
-    trt_engine_path:=/home/<user>/vtol-vision/weights/best.engine \
+    trt_engine_path:=/home/<user>/ros2_ws/src/vtol_vision/weights/mannequin_yolo11n/best.engine \
     "camera_uri:=nvarguscamerasrc ! video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1 ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! appsink"
 ```
 
