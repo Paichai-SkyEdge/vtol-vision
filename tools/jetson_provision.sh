@@ -6,7 +6,7 @@
 #
 # What it does (fully automated, ~20 min total):
 #   1. System update & essential packages
-#   2. SSH key import (password-less login from dev PC)
+#   2. Optional SSH key import (password-less login from dev PC)
 #   3. Intel RealSense SDK (librealsense2 + pyrealsense2)
 #   4. PyTorch + Ultralytics (JetPack-compatible wheels)
 #   5. ROS 2 Humble
@@ -22,6 +22,7 @@
 # Options:
 #   --dev-ip  <IP>      Dev-PC IP for rsync  (default: auto-detect via SSH_CLIENT)
 #   --dev-user <user>   Dev-PC username       (default: dev)
+#   --dev-pub-key <key> Optional public SSH key to append to authorized_keys
 #   --hostname <name>   Set Jetson hostname   (default: vtol-jetson)
 #   --no-ros            Skip ROS 2 install
 #   --no-trt            Skip TRT engine build
@@ -49,7 +50,7 @@ SKIP_ROS=false
 SKIP_TRT=false
 SKIP_SERVICE=false
 
-DEV_PUB_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH6YwCxnSFj/RiHaCY0N2de/eHlhW5nKA1zsfFEGR4mw zeetee1235@gmail.com"
+DEV_PUB_KEY="${DEV_PUB_KEY:-}"
 MODEL_URL="https://github.com/Paichai-SkyEdge/vtol-vision/releases/download/mannequin-model-v1/best.pt"
 PROJECT_DIR="$HOME/vtol-vision"
 WEIGHTS_DIR="$PROJECT_DIR/weights"
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --dev-ip)     DEV_IP="$2";         shift 2 ;;
     --dev-user)   DEV_USER="$2";       shift 2 ;;
+    --dev-pub-key) DEV_PUB_KEY="$2";    shift 2 ;;
     --hostname)   JETSON_HOSTNAME="$2";shift 2 ;;
     --no-ros)     SKIP_ROS=true;       shift   ;;
     --no-trt)     SKIP_TRT=true;       shift   ;;
@@ -91,18 +93,22 @@ info "Free disk: ${FREE_GB} GB"
 ok "Pre-flight passed."
 
 # ── Step 1: Hostname & SSH key ─────────────────────────────────────────────────
-hdr "Step 1 / 9 — Hostname & SSH key"
+hdr "Step 1 / 9 — Hostname & optional SSH key"
 
 sudo hostnamectl set-hostname "$JETSON_HOSTNAME"
 info "Hostname → $JETSON_HOSTNAME"
 
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
-if ! grep -qF "$DEV_PUB_KEY" ~/.ssh/authorized_keys 2>/dev/null; then
-  echo "$DEV_PUB_KEY" >> ~/.ssh/authorized_keys
-  chmod 600 ~/.ssh/authorized_keys
-  ok "Dev-PC SSH key added."
+if [[ -n "$DEV_PUB_KEY" ]]; then
+  if ! grep -qF "$DEV_PUB_KEY" ~/.ssh/authorized_keys 2>/dev/null; then
+    echo "$DEV_PUB_KEY" >> ~/.ssh/authorized_keys
+    chmod 600 ~/.ssh/authorized_keys
+    ok "Dev-PC SSH key added."
+  else
+    ok "Dev-PC SSH key already present."
+  fi
 else
-  ok "Dev-PC SSH key already present."
+  ok "No DEV_PUB_KEY provided; leaving authorized_keys unchanged."
 fi
 
 # ── Step 2: System update ──────────────────────────────────────────────────────

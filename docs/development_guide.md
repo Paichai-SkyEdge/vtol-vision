@@ -24,7 +24,8 @@ vtol-vision/
 ├── docs/                      # 개발/배포/연동 문서
 ├── datasets/, images/         # 데이터 작업 공간
 ├── training_bundle/           # 외부 GPU/Jetson 학습 번들
-└── runs/, weights/            # 로컬 학습/모델 산출물, 기본 ignore
+├── runs/                      # 로컬 학습/평가 산출물, 기본 ignore
+└── weights/                   # clone 직후 사용할 인수인계 모델
 ```
 
 상세 구조와 산출물 관리 기준은 [`repository_layout.md`](repository_layout.md)에 있습니다.
@@ -171,7 +172,8 @@ git diff --check
 
 ```bash
 colcon build --packages-select vtol_vision --cmake-args -DCMAKE_BUILD_TYPE=Release
-ros2 launch vtol_vision vision.launch.py trt_engine_path:=/absolute/path/to/best.engine
+ros2 launch vtol_vision vision.launch.py \
+  trt_engine_path:=/absolute/path/to/weights/mannequin_yolo11n/best.engine
 ```
 
 문서만 변경했다면 `git diff --check` 통과 여부를 최소 기준으로 둡니다.

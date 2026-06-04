@@ -108,7 +108,7 @@ YoloLoop (thread)
 |---|---|---|
 | `datasets/` | YOLO 학습/검증 데이터셋 | 메타데이터는 보존, 새 이미지/라벨은 필요할 때만 명시적으로 추가 |
 | `images/` | 원본/증강/재라벨 후보 이미지 작업 공간 | 실험용 작업 공간, 새 이미지 산출물은 기본 ignore |
-| `runs/` | Ultralytics 학습/평가 결과 | 로컬 산출물, 배포 모델은 Release 또는 `weights/`에서 관리 |
+| `runs/` | Ultralytics 학습/평가 결과 | 로컬 산출물, 인수인계 모델은 `weights/`에서 관리 |
 | `training_bundle/` | 외부 GPU/Jetson으로 복사 가능한 학습 번들 | 스크립트와 설정은 보존, 생성 아카이브와 산출물은 ignore |
 | `paper/` | 보고서/논문 자료 | LaTeX 빌드 산출물은 ignore |
 
@@ -153,7 +153,7 @@ ros2 launch vtol_vision vision.launch.py \
 CSI 카메라 사용 시:
 ```bash
 ros2 launch vtol_vision vision.launch.py \
-    trt_engine_path:=/absolute/path/to/best.engine \
+    trt_engine_path:=/absolute/path/to/weights/mannequin_yolo11n/best.engine \
     "camera_uri:=nvarguscamerasrc ! video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1 ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! appsink"
 ```
 

@@ -12,7 +12,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark ONNX inference with OpenCV DNN")
     parser.add_argument(
         "--model",
-        default="runs/detect/mannequin_detect/yolo11n_v1_gpu/weights/best.onnx",
+        default="weights/mannequin_yolo11n/best.onnx",
         help="Path to ONNX model",
     )
     parser.add_argument(

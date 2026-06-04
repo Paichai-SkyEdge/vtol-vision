@@ -6,10 +6,12 @@ Measures per-backend latency (PT / ONNX / TRT FP16) and writes a JSON file
 that generate_paper_figures.py consumes to build the latency figure.
 
 Usage (on Jetson):
-  python3 jetson_latency_bench.py --engine ~/vtol-vision/weights/best.engine
-  python3 jetson_latency_bench.py --engine ~/vtol-vision/weights/best.engine \
-      --pt ~/vtol-vision/weights/best.pt \
-      --onnx ~/vtol-vision/weights/best.onnx
+  python3 tools/jetson_latency_bench.py \
+      --engine ~/vtol-vision/weights/mannequin_yolo11n/best.engine
+  python3 tools/jetson_latency_bench.py \
+      --engine ~/vtol-vision/weights/mannequin_yolo11n/best.engine \
+      --pt ~/vtol-vision/weights/mannequin_yolo11n/best.pt \
+      --onnx ~/vtol-vision/weights/mannequin_yolo11n/best.onnx
 
 Then copy the JSON back to the dev machine:
   scp jetson:~/latency.json paper/figures/latency.json

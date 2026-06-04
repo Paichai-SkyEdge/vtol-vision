@@ -30,7 +30,7 @@
 
 ```bash
 ros2 launch vtol_vision vision.launch.py \
-  trt_engine_path:=/absolute/path/to/best.engine \
+  trt_engine_path:=/absolute/path/to/weights/mannequin_yolo11n/best.engine \
   camera_uri:=0
 ```
 
@@ -55,7 +55,7 @@ yolo export model=weights/mannequin_yolo11n/best.pt format=engine device=0 imgsz
 ```bash
 ros2 launch vtol_vision vision.launch.py \
   params_file:=/absolute/path/to/vision_params.yaml \
-  trt_engine_path:=/absolute/path/to/best.engine \
+  trt_engine_path:=/absolute/path/to/weights/mannequin_yolo11n/best.engine \
   class_map_yaml:=/absolute/path/to/class_map.yaml
 ```
 
@@ -63,7 +63,7 @@ CSI 카메라 예시:
 
 ```bash
 ros2 launch vtol_vision vision.launch.py \
-  trt_engine_path:=/absolute/path/to/best.engine \
+  trt_engine_path:=/absolute/path/to/weights/mannequin_yolo11n/best.engine \
   "camera_uri:=nvarguscamerasrc ! video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1 ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! appsink"
 ```
 

@@ -1,4 +1,4 @@
-path: /home/dev/vtol-vision/datasets/basket_mannequin_final
+path: .
 train: train/images
 val: val/images
 

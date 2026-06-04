@@ -57,7 +57,7 @@ ok "Jetson reachable."
 # ── 2. SSH key generation (if needed) ─────────────────────────────────────────
 if [[ ! -f ~/.ssh/id_ed25519 ]]; then
   info "Generating ED25519 SSH key ..."
-  ssh-keygen -t ed25519 -C "zeetee1235@gmail.com" -f ~/.ssh/id_ed25519 -N ""
+  ssh-keygen -t ed25519 -C "${USER}@$(hostname)-vtol-vision" -f ~/.ssh/id_ed25519 -N ""
   ok "SSH key generated."
 fi
 

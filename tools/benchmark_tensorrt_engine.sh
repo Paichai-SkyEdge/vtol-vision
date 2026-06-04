@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENGINE_PATH="${1:-/home/dev/vtol-vision/runs/detect/mannequin_detect/yolo11n_v1_gpu/weights/best.engine}"
+ENGINE_PATH="${1:-weights/mannequin_yolo11n/best.engine}"
 SHAPES="${SHAPES:-images:1x3x640x640}"
 ITERATIONS="${ITERATIONS:-200}"
 WARMUP="${WARMUP:-50}"
