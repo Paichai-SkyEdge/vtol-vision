@@ -4,7 +4,7 @@ Real-time basket/mannequin detection on Intel RealSense D435i color stream.
 
 Usage:
   python3 tools/realsense_live_detect.py
-  python3 tools/realsense_live_detect.py --model <path/to/best.onnx> --conf 0.4
+  python3 tools/realsense_live_detect.py --model <path/to/best.pt-or-best.onnx> --conf 0.4
 
 Keys:
   q / ESC  quit
@@ -21,16 +21,14 @@ import numpy as np
 import pyrealsense2 as rs
 from ultralytics import YOLO
 
-ONNX_DEFAULT = Path(
-    "runs/detect/runs/detect/basket_mannequin_detect/yolo11n_v1/weights/best.pt"
-)
+MODEL_DEFAULT = Path("weights/basket_mannequin_yolo11n/best.pt")
 CLASS_NAMES = ["basket", "mannequin"]
 CLASS_COLORS = [(0, 200, 255), (0, 255, 80)]  # basket=cyan, mannequin=green
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", default=str(ONNX_DEFAULT))
+    p.add_argument("--model", default=str(MODEL_DEFAULT))
     p.add_argument("--conf", type=float, default=0.25)
     p.add_argument("--basket-conf", type=float, default=0.15,
                    help="별도 confidence 임계값 for basket (class 0)")

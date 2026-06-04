@@ -53,6 +53,8 @@ DEV_PUB_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH6YwCxnSFj/RiHaCY0N2de/eHlhW5n
 MODEL_URL="https://github.com/Paichai-SkyEdge/vtol-vision/releases/download/mannequin-model-v1/best.pt"
 PROJECT_DIR="$HOME/vtol-vision"
 WEIGHTS_DIR="$PROJECT_DIR/weights"
+MODEL_PATH="$WEIGHTS_DIR/mannequin_yolo11n/best.pt"
+ENGINE_PATH="$WEIGHTS_DIR/mannequin_yolo11n/best.engine"
 ROS_WS="$HOME/ros2_ws"
 
 # ── Arg parse ─────────────────────────────────────────────────────────────────
@@ -191,7 +193,7 @@ fi
 # ── Step 6: Project files (rsync from dev PC) ─────────────────────────────────
 hdr "Step 6 / 9 — vtol-vision project"
 
-mkdir -p "$PROJECT_DIR" "$WEIGHTS_DIR"
+mkdir -p "$PROJECT_DIR" "$WEIGHTS_DIR/mannequin_yolo11n"
 
 if [[ -n "$DEV_IP" ]]; then
   info "Syncing from ${DEV_USER}@${DEV_IP}:~/vtol-vision/ ..."
@@ -208,27 +210,27 @@ else
   warn "DEV_IP not set — skipping rsync. Copy files manually to $PROJECT_DIR"
 fi
 
-# Download model weights if not present
-if [[ ! -f "$WEIGHTS_DIR/best.pt" ]]; then
-  info "Downloading best.pt from GitHub Releases ..."
-  wget -q --show-progress -O "$WEIGHTS_DIR/best.pt" "$MODEL_URL" || \
-    warn "Download failed. Place best.pt manually at $WEIGHTS_DIR/best.pt"
+# Download model weights only if the committed handoff model is missing.
+if [[ ! -f "$MODEL_PATH" ]]; then
+  info "Committed model not found. Downloading fallback best.pt from GitHub Releases ..."
+  wget -q --show-progress -O "$MODEL_PATH" "$MODEL_URL" || \
+    warn "Download failed. Place best.pt manually at $MODEL_PATH"
 fi
 
-[[ -f "$WEIGHTS_DIR/best.pt" ]] && ok "best.pt ready: $WEIGHTS_DIR/best.pt"
+[[ -f "$MODEL_PATH" ]] && ok "best.pt ready: $MODEL_PATH"
 
 # ── Step 7: TRT engine generation ─────────────────────────────────────────────
 if $SKIP_TRT; then
   warn "Skipping TRT engine build (--no-trt)."
-elif [[ ! -f "$WEIGHTS_DIR/best.pt" ]]; then
+elif [[ ! -f "$MODEL_PATH" ]]; then
   warn "best.pt not found — skipping TRT build."
 else
   hdr "Step 7 / 9 — TensorRT FP16 engine (runs in background, ~10 min)"
-  ENGINE_LOG="$WEIGHTS_DIR/trt_build.log"
+  ENGINE_LOG="$WEIGHTS_DIR/mannequin_yolo11n/trt_build.log"
   (
-    cd "$WEIGHTS_DIR"
+    cd "$PROJECT_DIR"
     yolo export \
-      model=best.pt \
+      model="$MODEL_PATH" \
       format=engine \
       device=0 \
       imgsz=640 \
@@ -240,7 +242,7 @@ else
   TRT_PID=$!
   info "TRT engine build started (PID $TRT_PID)."
   info "Monitor: tail -f $ENGINE_LOG"
-  info "Check when done: ls -lh $WEIGHTS_DIR/best.engine"
+  info "Check when done: ls -lh $ENGINE_PATH"
 fi
 
 # ── Step 8: ROS 2 workspace ────────────────────────────────────────────────────
@@ -268,7 +270,6 @@ if $SKIP_SERVICE; then
   warn "Skipping systemd service (--no-service)."
 else
   hdr "Step 9 / 9 — Systemd auto-start service"
-  ENGINE_PATH="$WEIGHTS_DIR/best.engine"
   SERVICE_FILE=/etc/systemd/system/vtol-vision.service
 
   sudo tee "$SERVICE_FILE" > /dev/null <<EOF
@@ -307,12 +308,12 @@ echo "  Project:      $PROJECT_DIR"
 echo "  ROS 2 ws:     $ROS_WS"
 echo ""
 echo "  Next steps:"
-echo "  1. Wait for TRT engine:   watch ls -lh $WEIGHTS_DIR/best.engine"
+echo "  1. Wait for TRT engine:   watch ls -lh $ENGINE_PATH"
 echo "  2. Start vision node:     sudo systemctl start vtol-vision"
 echo "  3. Check status:          sudo systemctl status vtol-vision"
 echo "  4. Stream latency bench:  python3 $PROJECT_DIR/tools/jetson_latency_bench.py \\"
-echo "                              --engine $WEIGHTS_DIR/best.engine \\"
-echo "                              --pt     $WEIGHTS_DIR/best.pt"
+echo "                              --engine $ENGINE_PATH \\"
+echo "                              --pt     $MODEL_PATH"
 echo ""
 echo "  From dev PC, once TRT done:"
 echo "  scp vtol-jetson:~/latency.json paper/figures/"
