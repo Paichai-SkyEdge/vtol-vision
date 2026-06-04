@@ -1,16 +1,74 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Local editor/tool state
 .codex
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ROS2 / colcon build products
 build/
 install/
 log/
+
+# CMake build products
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+compile_commands.json
+
+# Ultralytics / training state
 .ultralytics_config/
-datasets/
 runs/
-training_bundle/*.tar.gz
+wandb/
+mlruns/
+
+# Large local datasets and generated training bundles.
+# Existing tracked snapshots remain tracked; these rules keep new generated
+# images, labels, weights, and archives out of future commits by default.
+datasets/**
+!datasets/
+!datasets/README.md
+
+images/**
+!images/
+!images/README.md
+
+training_bundle/**
+!training_bundle/
+!training_bundle/README.md
+
+# Model artifacts
 *.pt
 *.onnx
 *.engine
+*.plan
+*.trt
+*.tar.gz
+
+# Committed handoff models. Keep generic model artifacts ignored, but allow the
+# curated models that other teams need immediately after clone.
+weights/**
+!weights/
+!weights/README.md
+!weights/basket_mannequin_yolo11n/
+!weights/basket_mannequin_yolo11n/best.pt
+!weights/basket_mannequin_yolo11n/best.onnx
+!weights/mannequin_yolo11n/
+!weights/mannequin_yolo11n/best.pt
+!weights/mannequin_yolo11n/best.onnx
 
 # LaTeX build artifacts
 *.aux

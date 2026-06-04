@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_PATH="${1:-/home/dev/vtol-vision/runs/detect/mannequin_detect/yolo11n_v1_gpu/weights/best.onnx}"
+MODEL_PATH="${1:-weights/mannequin_yolo11n/best.onnx}"
 ENGINE_PATH="${2:-${MODEL_PATH%.onnx}.engine}"
 FP16_FLAG="${FP16_FLAG:---fp16}"
 WORKSPACE_MB="${WORKSPACE_MB:-1024}"

@@ -4,6 +4,36 @@ ROS2 Humble 기반 C++ 비전 모듈. VTOL 기체의 Jetson Orin Nano Super에 �
 
 ---
 
+## 처음 받는 사람을 위한 문서
+
+| 상황 | 먼저 볼 문서 |
+|---|---|
+| 레포를 처음 받아 개발 환경을 잡는 경우 | [`docs/development_guide.md`](docs/development_guide.md) |
+| Jetson에 배포하고 실행하는 경우 | [`docs/jetson_deploy.md`](docs/jetson_deploy.md) |
+| 다른 부서에서 ROS2 토픽을 구독해 연결하는 경우 | [`docs/integration_guide.md`](docs/integration_guide.md) |
+| 레포 구조와 데이터/산출물 기준을 확인하는 경우 | [`docs/repository_layout.md`](docs/repository_layout.md) |
+| 학습/평가/장비 보조 스크립트를 찾는 경우 | [`tools/README.md`](tools/README.md) |
+
+빠른 개발 시작(Jetson 기준):
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone <repo-url> vtol_vision
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select vtol_vision --cmake-args -DCMAKE_BUILD_TYPE=Release
+```
+
+빠른 연동 확인:
+
+```bash
+ros2 topic info /vision/objects
+ros2 interface show vtol_vision/msg/VisionDetections
+```
+
+---
+
 ## 기능
 
 | 기능 | 설명 |
@@ -40,9 +70,9 @@ YoloLoop (thread)
 
 | 토픽 | 타입 | 설명 |
 |---|---|---|
-| `/vision/aruco` | `vtol_vision/VisionDetections` | ArUco 탐지 결과 |
-| `/vision/objects` | `vtol_vision/VisionDetections` | YOLO 객체 탐지 결과 |
-| `/vision/debug_image` | `sensor_msgs/Image` | 디버그 오버레이 (옵션) |
+| `/vision/aruco` | `vtol_vision/msg/VisionDetections` | ArUco 탐지 결과 |
+| `/vision/objects` | `vtol_vision/msg/VisionDetections` | YOLO 객체 탐지 결과 |
+| `/vision/debug_image` | `sensor_msgs/msg/Image` | 디버그 오버레이 (옵션) |
 
 **메시지 구조**
 - `VisionDetections` — 헤더 + `ArucoDetection[]` + `ObjectDetection[]` + `pipeline_latency_ms`
@@ -55,18 +85,34 @@ YoloLoop (thread)
 
 | 파일 | 설명 |
 |---|---|
-| `runs/.../best.pt` | YOLO11n PyTorch 체크포인트 |
-| `runs/.../best.onnx` | ONNX export (검증/벤치 용도) |
-| `runs/.../best.engine` | TensorRT engine — **Jetson에서 직접 생성** |
+| `weights/basket_mannequin_yolo11n/best.pt` | basket/mannequin 2-class YOLO11n PyTorch 체크포인트 |
+| `weights/basket_mannequin_yolo11n/best.onnx` | basket/mannequin 2-class ONNX export |
+| `weights/mannequin_yolo11n/best.pt` | mannequin 단일 클래스 YOLO11n PyTorch 체크포인트 |
+| `weights/mannequin_yolo11n/best.onnx` | mannequin 단일 클래스 ONNX export |
+| `*.engine` | TensorRT engine — **Jetson에서 직접 생성, 커밋하지 않음** |
 
 단일 클래스 (`mannequin`), 입력 640×640, 출력 텐서 `[1, 5, 8400]` (cx, cy, w, h, score).
 
 > `.engine` 파일은 GPU 아키텍처에 종속됩니다. 반드시 Jetson 위에서 export해야 합니다.
 > 자세한 절차는 [`docs/jetson_deploy.md`](docs/jetson_deploy.md) 참조.
 
-사전 학습 모델 다운로드:
-- GitHub Release: <https://github.com/Paichai-SkyEdge/vtol-vision/releases/tag/mannequin-model-v1>
-- 포함 자산: `best.pt`, `best.onnx`
+사전 학습 모델은 `weights/` 아래에 같이 커밋되어 있습니다. `.engine` 파일만 Jetson에서 따로 생성하세요.
+
+---
+
+## 데이터와 산출물 관리
+
+레포에는 현재 학습 재현을 위한 데이터 스냅샷과 번들이 함께 들어 있습니다. 새로 생성되는 대용량 데이터와 학습 산출물은 기본적으로 `.gitignore`에 막아두었습니다.
+
+| 경로 | 용도 | 관리 기준 |
+|---|---|---|
+| `datasets/` | YOLO 학습/검증 데이터셋 | 메타데이터는 보존, 새 이미지/라벨은 필요할 때만 명시적으로 추가 |
+| `images/` | 원본/증강/재라벨 후보 이미지 작업 공간 | 실험용 작업 공간, 새 이미지 산출물은 기본 ignore |
+| `runs/` | Ultralytics 학습/평가 결과 | 로컬 산출물, 배포 모델은 Release 또는 `weights/`에서 관리 |
+| `training_bundle/` | 외부 GPU/Jetson으로 복사 가능한 학습 번들 | 스크립트와 설정은 보존, 생성 아카이브와 산출물은 ignore |
+| `paper/` | 보고서/논문 자료 | LaTeX 빌드 산출물은 ignore |
+
+전체 구조와 운영 기준은 [`docs/repository_layout.md`](docs/repository_layout.md)를 참고하세요. 개발 인수인계는 [`docs/development_guide.md`](docs/development_guide.md), 타 부서 연동은 [`docs/integration_guide.md`](docs/integration_guide.md), 도구별 용도는 [`tools/README.md`](tools/README.md)에 정리되어 있습니다.
 
 ---
 
@@ -89,23 +135,19 @@ YoloLoop (thread)
 ## 빌드 및 실행 (Jetson)
 
 ```bash
-# 0. 모델 다운로드
-mkdir -p ~/vtol-vision/weights
-cd ~/vtol-vision/weights
-wget https://github.com/Paichai-SkyEdge/vtol-vision/releases/download/mannequin-model-v1/best.pt
+# 0. engine 생성 (최초 1회, 5~15분 소요)
+cd ~/ros2_ws/src/vtol_vision
+yolo export model=weights/mannequin_yolo11n/best.pt format=engine device=0 imgsz=640 half=True
 
-# 1. engine 생성 (최초 1회, 5~15분 소요)
-yolo export model=best.pt format=engine device=0 imgsz=640 half=True
-
-# 2. 빌드
+# 1. 빌드
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --packages-select vtol_vision --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
-# 3. 실행
+# 2. 실행
 ros2 launch vtol_vision vision.launch.py \
-    trt_engine_path:=/absolute/path/to/best.engine
+    trt_engine_path:=/absolute/path/to/weights/mannequin_yolo11n/best.engine
 ```
 
 CSI 카메라 사용 시:
@@ -140,6 +182,8 @@ ros2 launch vtol_vision vision.launch.py \
 
 ```
 vtol_vision/
+├── CMakeLists.txt
+├── package.xml
 ├── include/vtol_vision/
 │   ├── vision_node.hpp       # ROS2 노드
 │   └── yolo_detector.hpp     # TensorRT detector 인터페이스
@@ -152,8 +196,18 @@ vtol_vision/
 │   ├── vision_params.yaml    # 실행 파라미터
 │   └── class_map.example.yaml
 ├── launch/vision.launch.py
-├── docs/jetson_deploy.md     # Jetson 배포 전체 절차
-└── tools/                    # 학습/평가/벤치 스크립트
+├── docs/
+│   ├── README.md             # 역할별 문서 안내
+│   ├── development_guide.md  # 신규 개발자 온보딩
+│   ├── integration_guide.md  # 타 부서 ROS2 연동 계약
+│   ├── jetson_deploy.md      # Jetson 배포 전체 절차
+│   └── repository_layout.md  # 레포 구조와 산출물 관리 기준
+├── tools/                    # 학습/평가/벤치/장비 스크립트
+├── datasets/                 # 학습 데이터 스냅샷 및 메타데이터
+├── images/                   # 원본/증강/재라벨 후보 작업 공간
+├── training_bundle/          # 외부 학습용 self-contained 번들
+├── runs/                     # 로컬 학습/평가 산출물 (ignore)
+└── paper/                    # 보고서/논문 자료
 ```
 
 ---
