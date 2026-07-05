@@ -11,7 +11,7 @@ def generate_launch_description():
     default_class_map_file = PathJoinSubstitution([package_share, "config", "basket_mannequin_class_map.yaml"])
     # Engine path is overridden at runtime on the target device.
     # Generate best.engine on the Jetson with:
-    # yolo export model=weights/mannequin_yolo11n/best.pt format=engine device=0 imgsz=640 half=True
+    # yolo export model=weights/basket_mannequin_yolo11n_best.pt format=engine device=0 imgsz=640 half=True
     default_engine_path = ""
 
     params_file_arg = DeclareLaunchArgument(

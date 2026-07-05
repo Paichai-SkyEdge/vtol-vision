@@ -1,0 +1,27 @@
+vision_node:
+  ros__parameters:
+    camera_uri: "0"
+    camera_info_yaml: ""
+    frame_id: "camera"
+    frame_width: 640
+    frame_height: 480
+    camera_fps: 30
+    marker_size_m: 0.15        # 실제 마커 물리 크기(m) — 포즈 추정 정확도에 직접 영향
+    aruco_allowed_ids: []
+    # 40m 고도 기준 소형 마커 탐지 임계값.
+    # 값이 낮을수록 작은 마커를 허용하지만 오탐지 증가 가능.
+    # 기본값 0.02 (OpenCV 기본값 0.03보다 작음).
+    aruco_min_perimeter_rate: 0.02
+    # TensorRT engine is hardware-specific. Generate it on the target drone/Jetson from
+    # weights/basket_mannequin_yolo11n_best.pt, then pass the absolute .engine path.
+    trt_engine_path: ""
+    class_map_yaml: ""
+    conf_thr: 0.25
+    nms_thr: 0.45
+    yolo_input_size: 640
+    yolo_period_ms: 50
+    yolo_debug_log_period_ms: 2000
+    queue_size: 10
+    enable_debug_image: false
+    enable_yolo_debug_log: true
+    undistort_image: true

@@ -8,6 +8,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv_train/
 venv/
 
 # Local editor/tool state
@@ -32,6 +33,8 @@ compile_commands.json
 # Ultralytics / training state
 .ultralytics_config/
 *.cache
+*.pid
+logs/
 runs/
 wandb/
 mlruns/
@@ -58,6 +61,7 @@ training_bundle/**
 *.plan
 *.trt
 *.tar.gz
+*.zip
 
 # Committed handoff models. Keep generic model artifacts ignored, but allow the
 # curated models that other teams need immediately after clone.
