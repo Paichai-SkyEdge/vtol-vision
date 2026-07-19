@@ -85,13 +85,44 @@ YoloLoop (thread)
 
 | 파일 | 설명 |
 |---|---|
-| `weights/basket_mannequin_yolo11n/best.pt` | basket/mannequin 2-class YOLO11n PyTorch 체크포인트 |
+| `runs/detect/runs/skyedge/yolo11n_shadow_v1/weights/best.pt` | **최적 모델** — basket/mannequin 2-class YOLO11n + 그림자 증강, RealSense 실시간 탐지용 |
+| `runs/detect/runs/skyedge/yolo11s_realsense_v1/weights/best.pt` | basket/mannequin 2-class YOLO11s, 고해상도/원거리 대응 |
+| `weights/basket_mannequin_yolo11n/best.pt` | basket/mannequin 2-class YOLO11n PyTorch 체크포인트 (curated) |
 | `weights/basket_mannequin_yolo11n/best.onnx` | basket/mannequin 2-class ONNX export |
 | `weights/mannequin_yolo11n/best.pt` | mannequin 단일 클래스 YOLO11n PyTorch 체크포인트 |
 | `weights/mannequin_yolo11n/best.onnx` | mannequin 단일 클래스 ONNX export |
 | `*.engine` | TensorRT engine — **Jetson에서 직접 생성, 커밋하지 않음** |
 
 단일 클래스 (`mannequin`), 입력 640×640, 출력 텐서 `[1, 5, 8400]` (cx, cy, w, h, score).
+
+### RealSense D435i 실시간 탐지 GUI
+
+```bash
+# 기본 실행 (최적 모델)
+python3 tools/realsense_live_detect.py \
+    --model runs/detect/runs/skyedge/yolo11n_shadow_v1/weights/best.pt
+
+# 고해상도 모델 (원거리 대응)
+python3 tools/realsense_live_detect.py \
+    --model runs/detect/runs/skyedge/yolo11s_realsense_v1/weights/best.pt
+
+# USB 대역폭 부족 시 color-only 모드
+python3 tools/realsense_live_detect.py \
+    --model runs/detect/runs/skyedge/yolo11n_shadow_v1/weights/best.pt \
+    --color-only
+```
+
+**키 조작:**
+| 키 | 기능 |
+|---|---|
+| `q` / `ESC` | 종료 |
+| `d` | depth colormap 오버레이 토글 |
+| `r` | depth-guided ROI 추론 토글 |
+| `t` | 3×2 tiled 추론 토글 (소형/원거리 객체 탐지 향상) |
+| `h` | optical-flow 모션 보정 토글 |
+| `m` | 비교 모델 스왑 (`--compare-model` 필요) |
+
+**필요 패키지:** `pyrealsense2`, `opencv-python`, `ultralytics`
 
 > `.engine` 파일은 GPU 아키텍처에 종속됩니다. 반드시 Jetson 위에서 export해야 합니다.
 > 자세한 절차는 [`docs/jetson_deploy.md`](docs/jetson_deploy.md) 참조.
